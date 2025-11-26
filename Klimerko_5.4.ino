@@ -2,10 +2,10 @@
  * Citizen Air Quality measuring device with cloud monitoring, built at https://descon.me for the whole world.
  * Programmed, built and maintained by Vanja Stanic // www.vanjastanic.com
  * ------------------------------------------------------------------------------------------------------------
- * Version 5.2 dBm Update: 
- * - WiFi Signal now sends real dBm value (int) instead of text.
- * - Fixed HTTP Update memory issue.
- * - Safer JSON parsing.
+ * Version 5.4 Humidity Fix: 
+ * - Solved sensor "blocking" at >98% humidity by allowing calculation tolerance up to 110%.
+ * - Clamps humidity to 100% if calculation exceeds it.
+ * - Includes all previous features (Remote Restart, Update, etc.)
  */
 
 #include "src/AdafruitBME280/Adafruit_Sensor.h"
@@ -27,7 +27,6 @@
 #define pmsRX          D6
 #define SEA_LEVEL_PRESSURE_CAL 1.0
 
-// --- STRUKTURA ZA PODATKE ---
 struct Settings {
   char header[4];       
   char deviceId[32];
@@ -36,7 +35,6 @@ struct Settings {
   char altitude[6];
 };
 Settings klimerkoSettings;
-// ----------------------------
 
 float b = 17.62;
 float c = 243.12;
@@ -44,34 +42,26 @@ float gamma_var, dewpoint, humidityAbs, pressureSea;
 float pressureSea_cal = SEA_LEVEL_PRESSURE_CAL;
 float HeatIndex;
 
-// Globalne promenljive
 int altitude = 0; 
 char altitudeChar[6] = "0"; 
 float bmeTemperatureOffset = -2;
 char bmeTemperatureOffsetChar[8] = "-2";
 
-// Globalna promenljiva za Update URL
 String pendingUpdateUrl = "";
-
-// ------------------------- Global Flags -----------------------------------------------
 bool shouldStartConfig = false; 
 
-// ------------------------- Device -----------------------------------------------------
-String firmwareVersion = "5.2 Pro";
-const char* firmwareVersionPortal = "<p>Firmware Version: 5.2 (Real dBm WiFi Signal)</p>";
+String firmwareVersion = "5.4 Humidity Fix";
+const char* firmwareVersionPortal = "<p>Firmware Version: 5.4 (Humidity Fix)</p>";
 char klimerkoID[32];
 
-// -------------------------- WiFi ------------------------------------------------------
 const int wifiReconnectInterval = 60;
 bool wifiConnectionLost = true;
 unsigned long wifiReconnectLastAttempt;
 
-// ------------------- WiFi Configuration Portal ----------------------------------------
 char const *wifiConfigPortalPassword = "ConfigMode";
 const int wifiConfigTimeout = 1800;
 unsigned long wifiConfigActiveSince;
 
-// -------------------------- MQTT ------------------------------------------------------
 const char* MQTT_SERVER = "api.allthingstalk.io";
 const uint16_t MQTT_PORT = 1883;
 const char* MQTT_PASSWORD = "arbitrary";
@@ -81,7 +71,6 @@ const int mqttReconnectInterval = 30;
 bool mqttConnectionLost = true;
 unsigned long mqttReconnectLastAttempt;
 
-// Asset Names
 const char* PM1_ASSET = "pm1";
 const char* PM2_5_ASSET = "pm2-5";
 const char* PM10_ASSET = "pm10";
@@ -92,7 +81,7 @@ const char* HUMIDITY_ASSET = "humidity";
 const char* PRESSURE_ASSET = "pressure";
 const char* INTERVAL_ASSET = "interval";
 const char* FIRMWARE_ASSET = "firmware";
-const char* WIFI_SIGNAL_ASSET = "wifi-signal"; // Sada salje dBm (int)
+const char* WIFI_SIGNAL_ASSET = "wifi-signal";
 const char* ALTITUDE_ASSET = "altitude";
 const char* ALTITUDE_SET_ASSET = "altitude-set";
 const char* DEWPOINT_ASSET = "dewpoint";
@@ -101,8 +90,8 @@ const char* PRESSURESEA_ASSET = "pressureSea";
 const char* HEATINDEX_ASSET = "HeatIndex";
 const char* WIFI_CONFIG_ASSET = "wifi-config";
 const char* FIRMWARE_UPDATE_ASSET = "firmware-update";
+const char* RESTART_DEVICE_ASSET = "restart-device";
 
-// -------------------------- BUTTON ------------------------------------------------------
 const int buttonLongPressTime = 15000;
 const int buttonMediumPressTime = 1000;
 const int buttonShortPressTime = 50;
@@ -113,20 +102,17 @@ bool buttonLongPressDetected = false;
 int buttonLastState = HIGH;
 int buttonCurrentState;
 
-// -------------------------- LED ---------------------------------------------------------
 bool ledState = false;
 bool ledSuccessBlink = false;
 const int ledBlinkInterval = 1000;
 unsigned long ledLastUpdate;
 
-// --------------------- SENSORS (GENERAL) ------------------------------------------------
 uint8_t dataPublishInterval = 5;
 const uint8_t sensorAverageSamples = 10;
 const int sensorRetriesUntilConsideredOffline = 3;
 bool dataPublishFailed = false;
 unsigned long sensorReadTime, dataPublishTime;
 
-// -------------------------- PMS7003 -----------------------------------------------------
 const uint8_t pmsWakeBefore = 30;
 bool pmsSensorOnline = true;
 int pmsSensorRetry = 0;
@@ -135,12 +121,10 @@ bool pmsWoken = false;
 const char *airQuality, *airQualityRaw;
 int avgPM1, avgPM25, avgPM10;
 
-// -------------------------- BME280 -----------------------------------------------------
 bool bmeSensorOnline = true;
 int bmeSensorRetry = 0;
 float avgTemperature, avgHumidity, avgPressure, avgaltitude;
 
-// -------------------------- OBJECTS -----------------------------------------------------
 WiFiManager wm;
 WiFiManagerParameter portalDeviceID("device_id", "AllThingsTalk Device ID", deviceId, 32);
 WiFiManagerParameter portalDeviceToken("device_token", "AllThingsTalk Device Token", deviceToken, 64);
@@ -162,34 +146,23 @@ movingAvg temp(sensorAverageSamples);
 movingAvg hum(sensorAverageSamples);
 movingAvg pres(sensorAverageSamples);
 
-// --- FUNKCIJE ---
-
 void performFirmwareUpdate(String url) {
   Serial.println(F("[UPDATE] Starting Remote Firmware Update..."));
   Serial.print(F("[UPDATE] URL: ")); Serial.println(url);
-  
   if(pmsSensorOnline) pms.sleep(); 
-  
   ESP.wdtDisable(); 
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(10000);
-
   t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
-
   switch (ret) {
     case HTTP_UPDATE_FAILED:
       Serial.printf("[UPDATE] FAILED. Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-      ESP.wdtEnable(5000);
-      break;
+      ESP.wdtEnable(5000); break;
     case HTTP_UPDATE_NO_UPDATES:
-      Serial.println(F("[UPDATE] No Updates"));
-      ESP.wdtEnable(5000);
-      break;
+      Serial.println(F("[UPDATE] No Updates")); ESP.wdtEnable(5000); break;
     case HTTP_UPDATE_OK:
-      Serial.println(F("[UPDATE] OK! Rebooting..."));
-      ESP.restart();
-      break;
+      Serial.println(F("[UPDATE] OK! Rebooting...")); ESP.restart(); break;
   }
 }
 
@@ -263,9 +236,7 @@ void publishSensorData() {
   }
   
   doc.createNestedObject(FIRMWARE_ASSET)["value"] = firmwareVersion;
-  // Ovde se sada salje int (dBm)
   doc.createNestedObject(WIFI_SIGNAL_ASSET)["value"] = wifiSignal();
-  
   serializeJson(doc, JSONmessageBuffer);
   char topic[128];
   snprintf(topic, sizeof topic, "%s%s%s", "device/", deviceId, "/state");
@@ -276,7 +247,6 @@ void publishSensorData() {
 void readPMS() { 
   while (pmsSerial.available()) { pmsSerial.read(); }
   pms.requestRead();
-  
   if (pms.readUntil(data)) {
     avgPM1 = pm1.reading(data.PM_AE_UG_1_0);
     avgPM25 = pm25.reading(data.PM_AE_UG_2_5);
@@ -296,8 +266,6 @@ void readPMS() {
     else airQuality = "Very Polluted";
 
     Serial.print(F("Air Quality: ")); Serial.println(airQuality);
-    Serial.print(F("PM 10: ")); Serial.println(PM10);
-
     pmsSensorRetry = 0;
     if (!pmsSensorOnline) { pmsSensorOnline = true; Serial.println(F("[PMS] Online!")); }
   } else {
@@ -310,19 +278,19 @@ void readPMS() {
         pm1.reset(); pm25.reset(); pm10.reset();
         initPMS();
       }
-    } else {
-      initPMS();
-    }
+    } else { initPMS(); }
   }
 }
 
+// --- KLJUCNA IZMENA U OVOJ FUNKCIJI (readBME) ---
 void readBME() { 
   float temperatureRaw = bme.readTemperature();
   float temperature = temperatureRaw + bmeTemperatureOffset;
   float humidityRaw = bme.readHumidity();
+  // Kompenzacija
   float humidity = humidityRaw * exp(243.12 * 17.62 * (temperatureRaw - temperature) / (243.12 + temperatureRaw) / (243.12 + temperature));
-  float pressure = bme.readPressure() / 100.0F;
   
+  float pressure = bme.readPressure() / 100.0F;
   pressureSea = (((pressure)/pow((1-((float)(altitude))/44330), 5.255))) - pressureSea_cal;
   gamma_var = (b*temperature) / (c + temperature) + log(humidity/100.0);
   dewpoint = (c * gamma_var) / (b - gamma_var);
@@ -330,19 +298,21 @@ void readBME() {
   
   if (temperature > 26.7) {
     double c1 = -8.78469475566, c2 = 1.61139411, c3 = 2.33854883889, c4 = -0.14611605, c5= -0.012308094, c6= -0.0164248277778, c7= 0.002211732, c8= 0.00072546, c9= -0.000003582;
-    double T = temperature;
-    double R = humidity;
-    double A = ((c5 * T) + c2) * T + c1;
-    double B = ((c7 * T) + c4) * T + c3;
-    double C = ((c9 * T) + c8) * T + c6;
+    double T = temperature; double R = humidity;
+    double A = ((c5 * T) + c2) * T + c1; double B = ((c7 * T) + c4) * T + c3; double C = ((c9 * T) + c8) * T + c6;
     HeatIndex = ((C * R + B) * R + A);
-  } else {
-    HeatIndex = temperature;
-  }
+  } else { HeatIndex = temperature; }
   
   Serial.print(F("Temp: ")); Serial.println(temperature);
+  Serial.print(F("Hum: ")); Serial.println(humidity);
 
-  if (temperatureRaw > -100 && temperatureRaw < 150 && humidity >= 0 && humidity <= 100) {
+  // --- FIX ZA VLAGU ---
+  // Dozvoljavamo do 110% pre nego sto proglasimo gresku
+  if (temperatureRaw > -100 && temperatureRaw < 150 && humidity >= 0 && humidity <= 110) {
+    
+    // Ako je vlaga preko 100% (matematicki), limitiramo je na 100%
+    if (humidity > 100.0) humidity = 100.0;
+
     avgTemperature = temp.reading(temperature*100) / 100.0;
     avgHumidity = hum.reading(humidity*100) / 100.0;
     avgPressure = pres.reading(pressure*100) / 100.0;
@@ -352,7 +322,7 @@ void readBME() {
     if (!bmeSensorOnline) { bmeSensorOnline = true; Serial.println(F("[BME] Online!")); }
   } else {
     if (bmeSensorOnline) {
-      Serial.println(F("[BME] No Data"));
+      Serial.println(F("[BME] Invalid Data (Out of range)"));
       bmeSensorRetry++;
       if (bmeSensorRetry > sensorRetriesUntilConsideredOffline) {
         bmeSensorOnline = false;
@@ -360,21 +330,14 @@ void readBME() {
         temp.reset(); hum.reset(); pres.reset();
         initBME();
       }
-    } else {
-      initBME();
-    }
+    } else { initBME(); }
   }
 }
+// ---------------------------------------------
 
 void pmsPower(bool state) { 
-  if (state) { 
-    pms.wakeUp(); pms.passiveMode(); pmsWoken = true; 
-  } else { 
-    pmsSerial.flush(); 
-    delay(100); 
-    pmsWoken = false; 
-    pms.sleep(); 
-  }
+  if (state) { pms.wakeUp(); pms.passiveMode(); pmsWoken = true; } 
+  else { pmsSerial.flush(); delay(100); pmsWoken = false; pms.sleep(); }
 }
  
 void changeInterval(int interval) {
@@ -393,17 +356,12 @@ void publishDiagnosticData() {
   if (!wifiConnectionLost && !mqttConnectionLost) {
     char JSONmessageBuffer[512];
     DynamicJsonDocument doc(512);
-    
     doc.createNestedObject(INTERVAL_ASSET)["value"] = dataPublishInterval;
     doc.createNestedObject(FIRMWARE_ASSET)["value"] = firmwareVersion;
-    
-    // Sada saljemo integer (dBm)
     doc.createNestedObject(WIFI_SIGNAL_ASSET)["value"] = wifiSignal();
-    
     doc.createNestedObject(TEMP_OFFSET_ASSET)["value"] = bmeTemperatureOffset;
     doc.createNestedObject(ALTITUDE_ASSET)["value"] = altitude;
     doc.createNestedObject(ALTITUDE_SET_ASSET)["value"] = altitude;
-    
     serializeJson(doc, JSONmessageBuffer);
     char topic[256];
     snprintf(topic, sizeof topic, "%s%s%s", "device/", deviceId, "/state");
@@ -415,34 +373,24 @@ void publishDiagnosticData() {
 unsigned long readIntervalMillis() { return (dataPublishInterval * 60000) / sensorAverageSamples; }
 int readIntervalSeconds() { return (dataPublishInterval * 60) / sensorAverageSamples; }
 
-// --- UPRAVLJANJE MEMORIJOM ---
-
 void restoreData() {
   EEPROM.begin(sizeof(Settings));
   EEPROM.get(0, klimerkoSettings);
   EEPROM.end();
-
   if (String(klimerkoSettings.header) == "KLI") {
     strcpy(deviceId, klimerkoSettings.deviceId);
     strcpy(deviceToken, klimerkoSettings.deviceToken);
-    
     strcpy(bmeTemperatureOffsetChar, klimerkoSettings.tempOffset);
     bmeTemperatureOffset = atof(bmeTemperatureOffsetChar);
-    
     strcpy(altitudeChar, klimerkoSettings.altitude);
     altitude = atoi(altitudeChar);
-    
     Serial.println(F("[MEMORY] Settings Loaded OK"));
   } else {
-    Serial.println(F("[MEMORY] No valid settings found. Using Defaults."));
-    deviceId[0] = 0;
-    deviceToken[0] = 0;
-    strcpy(bmeTemperatureOffsetChar, "-2");
-    bmeTemperatureOffset = -2;
-    strcpy(altitudeChar, "0");
-    altitude = 0;
+    Serial.println(F("[MEMORY] Defaults."));
+    deviceId[0] = 0; deviceToken[0] = 0;
+    strcpy(bmeTemperatureOffsetChar, "-2"); bmeTemperatureOffset = -2;
+    strcpy(altitudeChar, "0"); altitude = 0;
   }
-  
   portalTemperatureOffset.setValue(bmeTemperatureOffsetChar, 8);
   portalAltitude.setValue(altitudeChar, 6);
   portalDeviceID.setValue(deviceId, 32);
@@ -452,7 +400,6 @@ void restoreData() {
 void saveData() {
   Serial.println(F("[MEMORY] Saving..."));
   bool changed = false;
-
   if (String(portalDeviceID.getValue()) != "" && String(portalDeviceID.getValue()) != String(deviceId)) {
     strcpy(deviceId, portalDeviceID.getValue()); changed = true;
   }
@@ -468,26 +415,18 @@ void saveData() {
      strcpy(altitudeChar, portalAltitude.getValue());
      altitude = atoi(altitudeChar); changed = true;
   }
-
   if (changed || String(klimerkoSettings.header) != "KLI") {
     strcpy(klimerkoSettings.header, "KLI");
     strcpy(klimerkoSettings.deviceId, deviceId);
     strcpy(klimerkoSettings.deviceToken, deviceToken);
     strcpy(klimerkoSettings.tempOffset, bmeTemperatureOffsetChar);
     strcpy(klimerkoSettings.altitude, altitudeChar);
-    
-    EEPROM.begin(sizeof(Settings));
-    EEPROM.put(0, klimerkoSettings);
-    if (EEPROM.commit()) {
-      Serial.println(F("[MEMORY] Saved Successfully."));
-    } else {
-      Serial.println(F("[MEMORY] Save Failed!"));
-    }
+    EEPROM.begin(sizeof(Settings)); EEPROM.put(0, klimerkoSettings); 
+    if (EEPROM.commit()) Serial.println(F("[MEMORY] Saved."));
+    else Serial.println(F("[MEMORY] Fail!"));
     EEPROM.end();
   }
 }
-
-// ----------------------------------------
 
 bool isNumber(const char* value) {
   if (value[0] != '-' && value[0] != '+' && !isDigit(value[0])) return false;
@@ -503,12 +442,9 @@ void connectAfterSavingData() { connectMQTT(); }
 void factoryReset() { 
   for (int i=0;i<40;i++) { digitalWrite(LED_BUILTIN, HIGH); delay(50); digitalWrite(LED_BUILTIN, LOW); delay(50); }
   wm.resetSettings(); ESP.eraseConfig();
-  
   EEPROM.begin(sizeof(Settings));
   for (int i=0; i < sizeof(Settings); i++) EEPROM.write(i, 0);
-  EEPROM.commit();
-  EEPROM.end();
-  
+  EEPROM.commit(); EEPROM.end();
   ESP.restart();
 }
 
@@ -550,12 +486,10 @@ String extractAssetNameFromTopic(String topic) { return topic.substring(38, topi
 
 void mqttCallback(char* p_topic, byte* p_payload, unsigned int p_length) {
   Serial.println(F("[MQTT] Message"));
-  
   if (p_length >= 512) return;
   DynamicJsonDocument doc(512); char json[512];
   memcpy(json, p_payload, p_length);
   json[p_length] = '\0';
-  
   if (deserializeJson(doc, json)) return;
 
   String asset = extractAssetNameFromTopic(String(p_topic));
@@ -589,23 +523,29 @@ void mqttCallback(char* p_topic, byte* p_payload, unsigned int p_length) {
   }
   else if (asset == FIRMWARE_UPDATE_ASSET) {
       String url = doc["value"].as<String>();
-      if (url.length() > 10) {
-        pendingUpdateUrl = url;
+      if (url.length() > 10) { pendingUpdateUrl = url; }
+  }
+  else if (asset == RESTART_DEVICE_ASSET) {
+      String v = doc["value"].as<String>();
+      if (v == "true" || v == "1") {
+          Serial.println(F("[SYSTEM] Remote Restart..."));
+          delay(1000);
+          ESP.restart();
       }
   }
 }
 
-// --- IZMENJENA FUNKCIJA ZA WIFI SIGNAL (Real dBm) ---
 int wifiSignal() {
-  if (!wifiConnectionLost) {
-    return WiFi.RSSI(); // Vraca npr. -65
-  }
-  return 0; // Nema signala
+  if (!wifiConnectionLost) { return WiFi.RSSI(); }
+  return 0; 
 }
-// ----------------------------------------------------
 
 void initPMS() { pmsSerial.begin(9600); pmsPower(true); }
-void initBME() { bme.begin(0x76); }
+void initBME() { 
+  // Inicijalizacija sa default podesavanjima (Adafruit)
+  // Ovo je dovoljno dobro, problem je bio u logici koda
+  bme.begin(0x76); 
+}
 
 void generateID() { snprintf(klimerkoID, sizeof(klimerkoID), "%s%i", "KLIMERKO-", ESP.getChipId()); Serial.println(klimerkoID); }
 void mqttSubscribeTopics() { 
@@ -664,7 +604,7 @@ void initPins() { pinMode(BUTTON_PIN, INPUT); pinMode(LED_BUILTIN, OUTPUT); digi
 
 void setup() {
   Serial.begin(115200);
-  Serial.println(F("\n --- KLIMERKO 5.2 dBm Signal ---"));
+  Serial.println(F("\n --- KLIMERKO 5.4 Humidity Fix ---"));
   ESP.wdtEnable(5000);
   initAvg(); initPins(); initPMS(); initBME(); generateID(); restoreData(); initWiFi(); initOTA(); initMQTT();
 }
