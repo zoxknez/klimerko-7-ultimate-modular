@@ -39,5 +39,3 @@ Ovaj dokument objašnjava šta znače različiti brojači čestica koje meri sen
 Brojači čestica omogućavaju da budemo „detektivi vazduha“ — posmatranjem odnosa i obrazaca između različitih count-* vrednosti lako se razlikuju izvori zagađenja (dim vs prašina vs kuvanje). Dobro osmišljene vizualizacije i jednostavne metrike (ratios, rolling averages, anotacije) značajno ubrzavaju i olakšavaju interpretaciju.
 
 ---
-
-Izvorni fajl: https://github.com/andrejicd/Klimerko-6/blob/main/Analiza%20broja%20%C4%8Destica%20(Particle%20Counts).txt
