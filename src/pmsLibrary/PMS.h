@@ -47,6 +47,8 @@ private:
   enum STATUS { STATUS_WAIT, STATUS_OK };
   enum MODE { MODE_ACTIVE, MODE_PASSIVE };
   
+  static const uint16_t FRAME_TIMEOUT_MS = 100;  // Timeout za nekompletan frame
+  
   Stream* _stream;
   DATA* _data;
   STATUS _status;
@@ -57,6 +59,7 @@ private:
   uint16_t _checksum;
   uint16_t _calculatedChecksum;
   uint8_t _payload[28]; // Buffer za podatke
+  uint32_t _lastByteTime = 0;  // Vreme poslednjeg primljenog bajta
 
   void loop();
 };

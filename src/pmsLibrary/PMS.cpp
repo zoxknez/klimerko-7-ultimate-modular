@@ -65,9 +65,17 @@ bool PMS::readUntil(DATA& data, uint16_t timeout)
 
 void PMS::loop()
 {
+  // Timeout mehanizam za nekompletan frame
+  // Ako je proslo vise od FRAME_TIMEOUT_MS od poslednjeg bajta, resetuj parser
+  if (_index > 0 && (millis() - _lastByteTime > FRAME_TIMEOUT_MS))
+  {
+    _index = 0;
+  }
+  
   if (_stream->available())
   {
     uint8_t ch = _stream->read();
+    _lastByteTime = millis();  // Azuriraj vreme poslednjeg bajta
 
     switch (_index)
     {
@@ -86,6 +94,8 @@ void PMS::loop()
     case 3:
       _frameLen |= ch;
       _calculatedChecksum += ch;
+      // Validacija duzine frame-a
+      if (_frameLen != 28) { _index = 0; return; }
       break;
     default:
       // _frameLen je 28. Header je 4. Ukupno 32 bajta.
