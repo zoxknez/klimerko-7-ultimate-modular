@@ -115,7 +115,34 @@ Da bi verzija 6.x radila i čitala broj čestica, neophodno je **ručno ažurira
 
 ---
 
+## 🚀 Klimerko 7.0 Ultimate Modular
+
+**Nova verzija dostupna!** Kompletno refaktorisana i nadograđena verzija sa modernom modularnom arhitekturom.
+
+### ✨ Nove funkcionalnosti u v7.0:
+- 📡 **mDNS Discovery** - pristup preko `klimerko-xxxxxx.local`
+- 🌐 **Web Dashboard** - real-time prikaz podataka u browseru
+- 📊 **Chart.js grafici** - vizualizacija PM i klimatskih podataka
+- ⏰ **NTP sinhronizacija** - pravo vreme u logovima
+- 🚨 **Alarm sistem** - upozorenja za PM2.5/PM10 pragove
+- 📈 **Prometheus /metrics** - integracija sa Grafana
+- 💾 **LittleFS logging** - lokalno čuvanje podataka
+- 🔧 **Modularna arhitektura** - 8 header fajlova za lakše održavanje
+- ⚡ **Deep Sleep mod** - baterijski rad
+
+### 📦 Preuzimanje v7.0:
+**GitHub:** https://github.com/zoxknez/klimerko-7-ultimate-modular
+
+**Autor v7.0:** o0o0o0o
+- GitHub: https://github.com/zoxknez
+- Portfolio: https://mojportfolio.vercel.app/
+
+Detaljne informacije: pogledajte `README_v7.md`
+
+---
+
 ## ℹ️ O Projektu
 
 Originalni projekat: [Klimerko GitHub](https://github.com/DesconBelgrade/Klimerko)  
 Modifikacije v6.6: Particle Counts, Fan Diagnostic, Humidity Comp, Stack Fix, Remote Controls.
+v7.0 Ultimate Modular: o0o0o0o (https://github.com/zoxknez)
